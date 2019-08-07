@@ -110,34 +110,40 @@ void conv_forward(conv_layer_t* l, volume_t** inputs, volume_t** outputs, int st
                 __m256d sum_v = _mm256_set1_pd(0.0);
                 for (int fd = 0; fd < filter->depth / 16 * 16; fd += 16) {
                   // loop unrolling + smid
-                  __m256d vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) );
-                  __m256d vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) );
+                  __m256d vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + fd );
+                  __m256d vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + fd );
                   __m256d temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
-                  vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) + 4 );
-                  vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) + 4 );
-                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + (fd + 4) );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + (fd + 4) );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
-                  vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) + 8 );
-                  vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) + 8 );
-                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + (fd + 8) );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + (fd + 8) );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
-                  vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) + 12 );
-                  vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) + 12 );
-                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + (fd + 12) );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + (fd + 12) );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
                 }
                 _mm256_store_pd(res, sum_v); // store the temp result
                 sum += res[0] + res[1] + res[2] + res[3];
+
+                // tail case
+                for (int t=filter->depth/16*16; t<filter->depth; t++) {
+                  sum += filter->weights[((filter->width * fy) + fx) * filter->depth + t] * in->weights[((in->width * in_y) + in_x) * in->depth + t];
+                }
               }
             }
           }
           sum = sum + l->biases->weights[f];
-          volume_set(out, out_x, out_y, f, sum);
+          // volume_set(out, out_x, out_y, f, sum);
+          out->weights[((out->width * out_y) + out_x) * out->depth + f] = sum;
         }
       }
     }
@@ -200,7 +206,8 @@ void relu_forward(relu_layer_t* l, volume_t** inputs, volume_t** outputs, int st
     for (int x = 0; x < l->input_width; x++) {
       for (int y = 0; y < l->input_height; y++) {
         for (int d = 0; d < l->input_depth; d++) {
-          double value = (volume_get(inputs[i], x, y, d) < 0.0) ? 0.0 : volume_get(inputs[i], x, y, d);
+          double perspective = inputs[i]->weights[((inputs[i]->width * y) + x) * inputs[i]->depth + d];
+          double value = (perspective < 0.0) ? 0.0 : perspective;
           volume_set(outputs[i], x, y, d, value);
         }
       }
@@ -257,7 +264,7 @@ void pool_forward(pool_layer_t* l, volume_t** inputs, volume_t** outputs, int st
               int in_y = y + fy;
               int in_x = x + fx;
               if (in_x >= 0 && in_x < in->width && in_y >= 0 && in_y < in->height) {
-                double v = volume_get(in, in_x, in_y, d);
+                double v = in->weights[((in->width * in_y) + in_x) * in->depth + d];;
                 if (v > max) {
                   max = v;
                 }
