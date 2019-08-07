@@ -157,15 +157,17 @@ void net_classify(network_t* net, volume_t** input, double** likelihoods, int n)
     }
 
     // tail case [make this a running on one single thread instead of all threading running this section]
-    for (int ii = total_threads * num_per_chunck; ii < n; ii++) {
-      copy_volume(b[0][0], input[ii]);
-      net_forward(net, b, 0, 0);
-      for (int jj=0; jj<NUM_CLASSES;  jj++) {
-        likelihoods[ii][jj] = b[11][0]->weights[jj];
+    if (thread_id == omp_get_num_threads() - 1) {
+      for (int ii = total_threads * num_per_chunck; ii < n; ii++) {
+        copy_volume(b[0][0], input[ii]);
+        net_forward(net, b, 0, 0);
+        for (int jj=0; jj<NUM_CLASSES;  jj++) {
+          likelihoods[ii][jj] = b[11][0]->weights[jj];
+        }
       }
     }
-    
     free_batch(b, 1);
   }
+  
 }
 
