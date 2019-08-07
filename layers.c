@@ -90,7 +90,7 @@ void conv_forward(conv_layer_t* l, volume_t** inputs, volume_t** outputs, int st
     volume_t* out = outputs[i];
 
     int stride = l->stride;
-
+    // depth = 3, 16, 20
     for (int f = 0; f < l->output_depth; f++) {
       volume_t* filter = l->filters[f];
       int y = -l->pad;
@@ -105,14 +105,38 @@ void conv_forward(conv_layer_t* l, volume_t** inputs, volume_t** outputs, int st
             for (int fx = 0; fx < filter->width; fx++) {
               int in_x = x + fx;
               if (in_y >= 0 && in_y < in->height && in_x >= 0 && in_x < in->width) {
-                for (int fd = 0; fd < filter->depth; fd++) {
-                  sum += volume_get(filter, fx, fy, fd) * volume_get(in, in_x, in_y, fd);
+
+                double res[4];
+                __m256d sum_v = _mm256_set1_pd(0.0);
+                for (int fd = 0; fd < filter->depth / 16 * 16; fd += 16) {
+                  // loop unrolling + smid
+                  __m256d vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) );
+                  __m256d vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) );
+                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) + 4 );
+                  vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) + 4 );
+                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) + 8 );
+                  vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) + 8 );
+                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + (((filter->width * fy) + fx) * filter->depth + fd) + 12 );
+                  vector2 = _mm256_loadu_pd( in->weights + (((in->width * fy) + fx) * in->depth + fd) + 12 );
+                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
                 }
+                _mm256_store_pd(res, sum_v); // store the temp result
+                sum += res[0] + res[1] + res[2] + res[3];
               }
             }
           }
-
-          sum += l->biases->weights[f];
+          sum = sum + l->biases->weights[f];
           volume_set(out, out_x, out_y, f, sum);
         }
       }

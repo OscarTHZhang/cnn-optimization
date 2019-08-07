@@ -140,16 +140,32 @@ void net_forward(network_t* net, batch_t* b, int start, int end) {
 }
 
 void net_classify(network_t* net, volume_t** input, double** likelihoods, int n) {
-  batch_t* b = make_batch(net, 1);
+  #pragma omp parallel 
+  {
+    batch_t* b = make_batch(net, 1);
 
-  for (int i = 0; i < n; i++) {
-    copy_volume(b[0][0], input[i]);
-    net_forward(net, b, 0, 0);
-    for (int j = 0; j < NUM_CLASSES; j++) {
-      likelihoods[i][j] = b[11][0]->weights[j];
+    int total_threads = omp_get_num_threads();
+    int num_per_chunck = (n - n % total_threads) / total_threads;
+    int thread_id = omp_get_thread_num();
+    // parallel part
+    for (int i = thread_id * num_per_chunck; i < (thread_id + 1) * num_per_chunck; i++) {
+      copy_volume(b[0][0], input[i]);
+      net_forward(net, b, 0, 0);
+      for (int j = 0; j < NUM_CLASSES; j++) {
+        likelihoods[i][j] = b[11][0]->weights[j];
+      }
     }
-  }
 
-  free_batch(b, 1);
+    // tail case
+    for (int ii =  total_threads * num_per_chunck; ii < n; ii++) {
+      copy_volume(b[0][0], input[ii]);
+      net_forward(net, b, 0, 0);
+      for (int jj=0; jj<NUM_CLASSES;  jj++) {
+        likelihoods[ii][jj] = b[11][0]->weights[jj];
+      }
+    }
+    
+    free_batch(b, 1);
+  }
 }
 
