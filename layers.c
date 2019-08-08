@@ -90,6 +90,7 @@ void conv_forward(conv_layer_t* l, volume_t** inputs, volume_t** outputs, int st
 
   int stride = l->stride;
   // depth = 3, 16, 20
+  // #pragma omp parallel for
   for (int f = 0; f < l->output_depth; f++) {
     volume_t* filter = l->filters[f];
     int y = -l->pad;
@@ -102,49 +103,73 @@ void conv_forward(conv_layer_t* l, volume_t** inputs, volume_t** outputs, int st
         double sum = 0.0;
         for (int fy = 0; fy < filter->height; fy++) {
           int in_y = y + fy;
-          for (int fx = 0; fx < filter->width; fx++) {
-            int in_x = x + fx;
-            if (in_y >= 0 && in_y < in->height && in_x >= 0 && in_x < in->width) {
+          if (in_y >= 0 && in_y < in->height) {
+            for (int fx = 0; fx < filter->width; fx++) {
+              int in_x = x + fx;
+              if (in_x >= 0 && in_x < in->width) {
 
-              double res[4];
-              __m256d sum_v = _mm256_set1_pd(0.0);
-              if (filter->depth == 3) {
-                sum += filter->weights[((filter->width * fy) + fx) * filter->depth ] * in->weights[((in->width * in_y) + in_x) * in->depth];
-                sum += filter->weights[((filter->width * fy) + fx) * filter->depth + 1] * in->weights[((in->width * in_y) + in_x) * in->depth + 1];
-                sum += filter->weights[((filter->width * fy) + fx) * filter->depth + 2] * in->weights[((in->width * in_y) + in_x) * in->depth + 2];
-              } else {
-                for (int fd = 0; fd < filter->depth / 16 * 16; fd += 16) {
+                double res[4];
+                __m256d sum_v = _mm256_set1_pd(0.0);
+                if (filter->depth == 3) {
+                  sum += filter->weights[((filter->width * fy) + fx) * filter->depth ] * in->weights[((in->width * in_y) + in_x) * in->depth];
+                  sum += filter->weights[((filter->width * fy) + fx) * filter->depth + 1] * in->weights[((in->width * in_y) + in_x) * in->depth + 1];
+                  sum += filter->weights[((filter->width * fy) + fx) * filter->depth + 2] * in->weights[((in->width * in_y) + in_x) * in->depth + 2];
+                } else if (filter->depth == 16) {
                   // loop unrolling + smid
-                  __m256d vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + fd );
-                  __m256d vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + fd );
+                  __m256d vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth );
+                  __m256d vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth );
                   __m256d temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
-                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + (fd + 4) );
-                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + (fd + 4) );
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 4 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 4 );
                   temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
-                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + (fd + 8) );
-                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + (fd + 8) );
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 8 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 8 );
                   temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
-                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + (fd + 12) );
-                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + (fd + 12) );
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 12 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 12 );
                   temp_product = _mm256_mul_pd(vector1, vector2);
                   sum_v = _mm256_add_pd(sum_v, temp_product);
 
+                  _mm256_store_pd(res, sum_v); // store the temp result
+                  sum += res[0] + res[1] + res[2] + res[3];
+                } else if (filter->depth == 20) {
+                  // loop unrolling + smid
+                  __m256d vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth );
+                  __m256d vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth );
+                  __m256d temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 4 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 4 );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 8 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 8 );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 12 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 12 );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  vector1 = _mm256_loadu_pd( filter->weights + ((filter->width * fy) + fx) * filter->depth + 16 );
+                  vector2 = _mm256_loadu_pd( in->weights + ((in->width * in_y) + in_x) * in->depth + 16 );
+                  temp_product = _mm256_mul_pd(vector1, vector2);
+                  sum_v = _mm256_add_pd(sum_v, temp_product);
+
+                  _mm256_store_pd(res, sum_v); // store the temp result
+                  sum += res[0] + res[1] + res[2] + res[3];
                 }
-                _mm256_store_pd(res, sum_v); // store the temp result
-                sum += res[0] + res[1] + res[2] + res[3];
 
-                // tail case
-                for (int t=filter->depth/16*16; t<filter->depth; t++) {
-                  sum += filter->weights[((filter->width * fy) + fx) * filter->depth + t] * in->weights[((in->width * in_y) + in_x) * in->depth + t];
-                }
               }
-
             }
           }
         }
@@ -177,6 +202,7 @@ void conv_load(conv_layer_t* l, const char* file_name) {
         for (int d = 0; d < depth; d++) {
           double val;
           fscanf(fin, "%lf", &val);
+          // l->filters[f][((l->filters[f] * ))]
           volume_set(l->filters[f], x, y, d, val);
         }
       }
@@ -210,7 +236,7 @@ relu_layer_t* make_relu_layer(int input_width, int input_height, int input_depth
 // Applies the Rectifier Linear Unit (ReLU) function to the input, which sets
 // output(x, y, d) to max(0.0, input(x, y, d)).
 void relu_forward(relu_layer_t* l, volume_t** inputs, volume_t** outputs, int start, int end) {
-  #pragma omp parallel for
+  // #pragma omp parallel for
   for (int x = 0; x < l->input_width; x++) {
     for (int y = 0; y < l->input_height; y++) {
       for (int d = 0; d < l->input_depth; d++) { 
@@ -321,7 +347,7 @@ void fc_forward(fc_layer_t* l, volume_t** inputs, volume_t** outputs, int start,
   volume_t* in  = inputs[0];
   volume_t* out = outputs[0];
 
-  #pragma omp parallel for
+  // #pragma omp parallel for
   for (int i = 0; i < l->output_depth; i++) {
     double dot = 0.0;
     for (int d = 0; d < l->num_inputs; d++) {
